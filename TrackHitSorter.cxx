@@ -8,7 +8,8 @@
 
 namespace thsort {
 
-  void TrackHitSorter::buildSortedHitList( const larlite::track& track, const std::vector<larlite::hit>& hit_v, const float max_radius, std::vector<int>& hitmask_v ) {
+  void TrackHitSorter::buildSortedHitList( const larlite::vertex& vertex, const larlite::track& track, const std::vector<larlite::hit>& hit_v,
+					   const float max_radius, std::vector<int>& hitmask_v ) {
 
     // geo utility
     const larutil::Geometry* geo = larutil::Geometry::GetME();
@@ -18,6 +19,17 @@ namespace thsort {
     // convert track into line segments
     std::vector< geo2d::LineSegment<float> > seg_v[3]; // segment per plane
     std::vector< float > segdist_v[3]; // distance to the segment
+
+    // get plane position of vertex
+    Double_t vtx_xyz[3];
+    vertex.XYZ( vtx_xyz );
+    float vtx_x = vtx_xyz[0];
+    std::vector<float> vtx_w(3);
+    std::vector< geo2d::Vector<float> > vtx_pt_v;
+    for (int p=0; p<3; p++) {
+      vtx_w[p] = 0.3*geo->NearestWire( vtx_xyz, p );
+      vtx_pt_v.push_back( geo2d::Vector<float>( vtx_w[p], vtx_x ) );
+    }
 
     int numpts = track.NumberTrajectoryPoints();
     int ipt = 0;
@@ -100,7 +112,9 @@ namespace thsort {
 	  if ( r > max_radius ) {
 	    continue;
 	  }
-	  HitOrder ho( hitp_v[p].at(ihit), s+segdist_v[p][iseg], r );
+	  float d = geo2d::dist( pt1, vtx_pt_v[p] );
+	  
+	  HitOrder ho( hitp_v[p].at(ihit), s+segdist_v[p][iseg], r, d );
 	  ordered[p].emplace_back( std::move(ho) );
 	  hitmask_v[ hitidx_v[p].at(ihit) ] = 0; // mask out
 	  break;

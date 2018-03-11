@@ -20,6 +20,7 @@
 #include "DataFormat/EventImage2D.h"
 
 #include "TrackHitSorter.h"
+#include "HandScanTable.h"
 
 int main( int nargs, char** argv ) {
 
@@ -27,6 +28,11 @@ int main( int nargs, char** argv ) {
   std::string trackfile  = "/home/twongjirad/working/data/larbys/mcc8v6/goodreco1mu1p/goodreco_1mu1p_track.root";
   std::string oprecofile = "/home/twongjirad/working/data/larbys/mcc8v6/goodreco1mu1p/goodreco_1mu1p_opreco.root";
   std::string ssnetfile  = "/home/twongjirad/working/data/larbys/mcc8v6/goodreco1mu1p/goodreco_1mu1p_ssnet.root";
+
+
+  thsort::HandScanTable handscaninfo("goodrecohandscan_1mu1p.tab");
+  //int vtxid = handscaninfo.GetVertexID( 5128, 34, 1729 );
+  //std::cout << "table test: vtx="  << vtxid << " should equal 2" << std::endl;
   
   larlitecv::DataCoordinator dataco;
   dataco.add_inputfile( hitfile,    "larlite" );
@@ -85,7 +91,7 @@ int main( int nargs, char** argv ) {
 
 	// associated track. collect hits for it
 	thsort::TrackHitSorter algo;
-	algo.buildSortedHitList( track, hit_v, max_radius, hitmask );
+	algo.buildSortedHitList( vtx, track, hit_v, max_radius, hitmask );
       
 	std::cout << "Hit Sorter" << std::endl;
 	std::cout << " hits: p0=" << algo.ordered[0].size() << " p1=" << algo.ordered[1].size() << " p2=" << algo.ordered[2].size() << std::endl;

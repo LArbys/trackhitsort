@@ -45,7 +45,7 @@ all: libTrackHitSort.so $(PROGRAMS)
 	@$(CXX) $@.cxx -o $@ $(CXXFLAGS) libTrackHitSort.so $(LDFLAGS)
 	@rm -rf *.dSYM
 
-libTrackHitSort.so: TrackHitSorter.o
+libTrackHitSort.so: TrackHitSorter.o HandScanTable.o
 	@$(CXX) -shared -o $@ $^
 
 %.o: %.cxx %.h
