@@ -1,0 +1,7 @@
+*.png
+*~
+.pylardcache/*
+*.o
+test
+*.so
+last_filelist_*
