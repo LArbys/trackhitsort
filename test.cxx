@@ -5,6 +5,7 @@
 #include "TH2D.h"
 #include "TCanvas.h"
 #include "TMarker.h"
+#include "TGraph.h"
 
 // larlitecv
 #include "Base/DataCoordinator.h"
@@ -45,16 +46,29 @@ int main( int nargs, char** argv ) {
   std::cout << "nentries: " << nentries << std::endl;
 
   // parameters
-  const float max_radius = 1.0;
-  bool dump_images = false;
+  const float max_radius = 0.65;
+  const float dedx_bin_width = 1.0;
+  bool dump_images = false;    // dump image of all hits with markers for track locations
+  bool draw_track_hits = false; // dump hits only for those associated to certain vertex. image for each vertex and each plane (i.e. 3 per vertex)
+  bool draw_hit_graph = false;  // draw hits connected in path- and dist- order
+  bool plot_dedx = true;
   int colors[4] = { kCyan, kMagenta, kRed };
-  bool draw_track_hits = true;
+
   
   for ( int ientry=0; ientry<nentries; ientry++) {
     dataco.goto_entry( ientry, "larlite" );
 
     std::cout << "-----------------------------------------------------------------" << std::endl;
     std::cout << "[entry " << ientry << "]" << std::endl;
+
+    int run = 0;
+    int subrun = 0;
+    int event = 0;
+    dataco.get_id( run, subrun, event );
+
+    std::cout << "Run, Subrun, Event: " << run << ", " << subrun << ", "  << event << std::endl;
+
+    int goodvtxid = handscaninfo.GetVertexID( run, subrun, event );
 
     larcv::EventImage2D* ev_img      = (larcv::EventImage2D*) dataco.get_larcv_data( larcv::kProductImage2D, "modimg" );
     larlite::event_vertex* ev_vertex = (larlite::event_vertex*)dataco.get_larlite_data( larlite::data::kVertex, "trackReco" );
@@ -69,10 +83,17 @@ int main( int nargs, char** argv ) {
     std::cout << "number of tracks: " << track_v.size() << std::endl;
     std::cout << "number of hits: " << hit_v.size() << std::endl;
 
+    int vtxid = handscaninfo.GetVertexID( 5128, 34, 1729 );    
+
     // start loop over vertex
     int ivertex=-1;
     for (auto const& vtx : vertex_v ) {
       ivertex++;
+
+      if ( ivertex!=goodvtxid )
+	continue;
+
+      std::vector< std::vector<float> > dedxplots[3];
       std::vector<int> hitmask( hit_v.size(), 1 );
       
       // loop over tracks, keep only those that start from this vertex
@@ -92,9 +113,13 @@ int main( int nargs, char** argv ) {
 	// associated track. collect hits for it
 	thsort::TrackHitSorter algo;
 	algo.buildSortedHitList( vtx, track, hit_v, max_radius, hitmask );
-      
+
+	std::vector< std::vector<float> > dedx_per_plane(3);
+	algo.getPathBinneddEdx( dedx_bin_width, dedx_per_plane );
+	dedxplots[2].push_back( dedx_per_plane[2] ); // saved per track
+	
 	std::cout << "Hit Sorter" << std::endl;
-	std::cout << " hits: p0=" << algo.ordered[0].size() << " p1=" << algo.ordered[1].size() << " p2=" << algo.ordered[2].size() << std::endl;
+	std::cout << " hits: p0=" << algo.pathordered[0].size() << " p1=" << algo.pathordered[1].size() << " p2=" << algo.pathordered[2].size() << std::endl;
 	algo.dump();
 
 	if ( draw_track_hits ) {
@@ -111,7 +136,7 @@ int main( int nargs, char** argv ) {
 	    hist2d[plane] = new TH2D( histname, "TPC data;wire number;time tick number", meta.cols(), meta.min_x(), meta.max_x(), meta.rows(), meta.min_y(), meta.max_y() );
 
 	    // draw hit. set value by s
-	    for ( auto const& ho : algo.ordered[plane] ) {
+	    for ( auto const& ho : algo.pathordered[plane] ) {
 	      const larlite::hit& hohit = *ho.phit;
 	      int wirecol = meta.col( hohit.WireID().Wire );
 	      int tickrow = meta.row( 2400+hohit.PeakTime() );
@@ -141,6 +166,96 @@ int main( int nargs, char** argv ) {
 	    delete hist2d[plane];
 	  }//end of loop over drawn planes
 	}//if draw track hits
+
+	if ( draw_hit_graph ) {
+	  const larcv::ImageMeta& meta = img_v.front().meta();
+	  const larutil::Geometry*      geo  = larutil::Geometry::GetME();
+	  const larutil::LArProperties* larp = larutil::LArProperties::GetME();
+	  TGraph* gpath[3];
+	  TGraph* gdist[3];      
+	  for (int plane=0; plane<3; plane++) {
+	    // loop through the event images: one per TPC wireplane
+	    
+	    // dimensions/coordinates of image (all images have the same dimensions)
+	    gpath[plane] = new TGraph( algo.pathordered[plane].size() );
+	    gdist[plane] = new TGraph( algo.distordered[plane].size() );	    
+
+	    // draw hit. set value by s
+	    int ihit=-1;
+	    for ( auto const& ho : algo.pathordered[plane] ) {
+	      ihit++;
+	      const larlite::hit& hohit = *ho.phit;
+	      std::cout << "[ihit " << ihit << "] w=" << hohit.WireID().Wire << " tick=" << 2400+hohit.PeakTime() << std::endl;
+	      gpath[plane]->SetPoint(ihit, hohit.WireID().Wire, 2400+hohit.PeakTime() );
+	    }
+	    
+	    ihit=-1;
+	    for ( auto const& ho : algo.distordered[plane] ) {
+	      ihit++;
+	      const larlite::hit& hohit = *ho.phit;
+	      gdist[plane]->SetPoint(ihit, hohit.WireID().Wire, 2400+hohit.PeakTime() );
+	    }
+
+	    gdist[plane]->SetLineColor(kRed);
+	    gdist[plane]->SetMarkerStyle(24);
+	    gpath[plane]->SetMarkerStyle(24);
+	    
+	    TCanvas c("c","c",1800,1200);
+	    c.Draw();
+	    gpath[plane]->Draw("ALP");
+	    gdist[plane]->Draw("LPsame");
+
+	    float vtxtick = vtx.X()/(larp->DriftVelocity()*0.5)+3200;
+	    Double_t vtx_xyz[3];
+	    vtx.XYZ( vtx_xyz );
+	    float vtxwire = geo->NearestWire( vtx_xyz, plane );
+	    
+	    TMarker mvtx( vtxwire, vtxtick, 24 );
+	    //mvtx.SetMarkerStyle(24);
+	    mvtx.SetMarkerColor(kRed);
+	    mvtx.SetMarkerSize(1.0);
+	    mvtx.Draw();
+	    
+	    c.Update();
+	    char zname[100];
+	    sprintf( zname, "tgraphs_entry%03d_vertex%d_track%d_plane%d.png", ientry, ivertex, itrack, plane );
+	    c.SaveAs(zname);
+	    
+	    delete gpath[plane];
+	    delete gdist[plane];	    
+	  }//end of loop over drawn planes
+	}//if draw track graphs
+
+	if ( plot_dedx ) {
+
+	  TGraph* gdedx[ dedxplots[2].size() ] = {NULL};
+	  int itrack=-1;
+	  int maxtrack = 0;
+	  int maxlength = 0;
+	  for (auto const& dedx_v : dedxplots[2]) {
+	    itrack++;
+	    gdedx[itrack] = new TGraph( dedx_v.size() );
+	    if ( maxlength<dedx_v.size() ) {
+	      maxtrack = itrack;
+	      maxlength = dedx_v.size();
+	    }
+	    for (int ipt=0; ipt<dedx_v.size(); ipt++) {
+	      gdedx[itrack]->SetPoint( ipt, ipt*dedx_bin_width, dedx_v.at(ipt) );
+	    }
+	  }
+
+	  TCanvas c("c","c",800,600);
+	  gdedx[maxtrack]->Draw("ALP");
+	  for (int i=0; i<dedxplots[2].size(); i++) {
+	    gdedx[i]->SetMarkerStyle(24);	    
+	    gdedx[i]->Draw("LP");
+	  }
+	  char zname[100];
+	  sprintf( zname, "dedx_entry%03d_vertex%d.png", ientry, ivertex, 2 );
+	  c.SaveAs(zname);
+
+	}//end of if plot dedx
+	
       }//end of track loop
     }//end of vertex loop
 
@@ -150,7 +265,6 @@ int main( int nargs, char** argv ) {
       const larutil::LArProperties* larp = larutil::LArProperties::GetME();	
       
       TH2D* hist2d[3];
-      
       for (int plane=0; plane<3; plane++) {
 	// loop through the event images: one per TPC wireplane
 	

@@ -8,17 +8,21 @@
 #include "DataFormat/track.h"
 #include "DataFormat/hit.h"
 
+// Geo2D
+#include "Geo2D/Core/Geo2D.h"
+#include "Geo2D/Core/LineSegment.h"
+
+
 namespace thsort {
 
   class HitOrder {
   public:
-    HitOrder ( const larlite::hit* phit_, float s_, float r_, float d_ ) : phit(phit_), s(s_), r(r_), d(d_) {};
+    HitOrder ( const larlite::hit* phit_, float s_, float r_ ) : phit(phit_), s(s_), r(r_) {};
     ~HitOrder() {};
     
     const larlite::hit* phit; // pointer to hit
-    float s; // distance to start along track
+    float s; // path position metric
     float r; // distance from track seg to hit
-    float d; // distance from point to vertex in 3d	
 
     bool operator< ( const HitOrder& rh ) const {
       if ( s < rh.s ) return true;
@@ -35,9 +39,18 @@ namespace thsort {
 
     void buildSortedHitList( const larlite::vertex& vtx, const larlite::track& track, const std::vector<larlite::hit>& hit_v,
 			     const float max_radius, std::vector<int>& hitmask_v );
+    void getPathBinneddEdx( const float binwidth, std::vector< std::vector<float> >& dedx_per_plane );
     void dump() const;
+
+    // track segments. 3d and 2d projected
+    std::vector< std::vector<float> > path3d[3]; // per plane. corresponding 3d point at a
+    std::vector< float > dist3d[3]; // per plane. corresponding 3d point at a
+    std::vector< geo2d::LineSegment<float> > seg_v[3]; // segment per plane
+    std::vector< float > segdist_v[3]; // distance to the segment
+
     
-    std::vector<HitOrder> ordered[3]; // per plane
+    std::vector<HitOrder> pathordered[3]; // per plane. ordered by path length
+    std::vector<HitOrder> distordered[3]; // per plane. ordered by distance from vertex
 
     
   };

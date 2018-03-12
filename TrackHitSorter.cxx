@@ -3,9 +3,6 @@
 #include "LArUtil/Geometry.h"
 #include "LArUtil/LArProperties.h"
 
-#include "Geo2D/Core/Geo2D.h"
-#include "Geo2D/Core/LineSegment.h"
-
 namespace thsort {
 
   void TrackHitSorter::buildSortedHitList( const larlite::vertex& vertex, const larlite::track& track, const std::vector<larlite::hit>& hit_v,
@@ -17,8 +14,12 @@ namespace thsort {
     const float cm_per_tick = driftv*0.5;
     
     // convert track into line segments
-    std::vector< geo2d::LineSegment<float> > seg_v[3]; // segment per plane
-    std::vector< float > segdist_v[3]; // distance to the segment
+    for (int p=0; p<3; p++) {
+      path3d[p].clear();
+      dist3d[p].clear();
+      seg_v[p].clear();
+      segdist_v[p].clear();
+    }
 
     // get plane position of vertex
     Double_t vtx_xyz[3];
@@ -52,6 +53,28 @@ namespace thsort {
 	  seg_v[p].emplace_back( std::move(ls) );
 	  segdist_v[p].push_back( dist_s );
 	  dist_s += sqrt(geo2d::length2(ls));
+
+	  // store 3d segment
+	  std::vector<float> seg3d(3);
+	  if ( path3d[p].size()==0 ) {
+	    // set vertex
+	    for (int i=0; i<3; i++)
+	      seg3d[i] = here(i);
+	    path3d[p].push_back( seg3d );
+	  }
+	  for (int i=0; i<3; i++)
+	    seg3d[i]   = next(i);
+	  path3d[p].push_back( seg3d );
+
+	  // store distance between current and last point
+	  float seglen3 = 0.;
+	  size_t pos = path3d[p].size()-1;
+	  for (int i=0; i<3; i++) {
+	    float dd = path3d[p].at(pos)[i]-path3d[p].at(pos-1)[i];
+	    seglen3 += dd*dd;
+	  }
+	  seglen3 = sqrt(seglen3);
+	  dist3d[p].push_back(seglen3);
 	}
       }
       std::cout << std::endl;
@@ -114,8 +137,10 @@ namespace thsort {
 	  }
 	  float d = geo2d::dist( pt1, vtx_pt_v[p] );
 	  
-	  HitOrder ho( hitp_v[p].at(ihit), s+segdist_v[p][iseg], r, d );
-	  ordered[p].emplace_back( std::move(ho) );
+	  HitOrder path_ho( hitp_v[p].at(ihit), s+segdist_v[p][iseg], r );
+	  HitOrder dist_ho( hitp_v[p].at(ihit), d, r );	  
+	  pathordered[p].emplace_back( std::move(path_ho) );
+	  distordered[p].emplace_back( std::move(dist_ho) );
 	  hitmask_v[ hitidx_v[p].at(ihit) ] = 0; // mask out
 	  break;
 	}//end of loop over track segment in plane
@@ -124,8 +149,100 @@ namespace thsort {
 
     // sort hits
     for (int p=0; p<3; p++) {
-      std::sort( ordered[p].begin(), ordered[p].end() ); 
+      std::sort( pathordered[p].begin(), pathordered[p].end() );
+      std::sort( distordered[p].begin(), distordered[p].end() ); 
     }
+  }
+
+
+  void TrackHitSorter::getPathBinneddEdx( const float binwidth, std::vector< std::vector<float> >& dedx_per_plane ) {
+    // for each plane, we move through 3d track, taking steps of binwidth and collecting hits [-binwidth,binwidth] from center position
+    // these are in 3D, so we need to decide what s-values to collect for he projected hits
+    const larutil::Geometry* geo = larutil::Geometry::GetME();
+    const larutil::LArProperties* larp = larutil::LArProperties::GetME();
+    
+    for (int p=2; p<3; p++) {
+
+      // get track segment information. both 3d and 2d projections
+      const std::vector< std::vector<float> >& plpath3d = path3d[p];
+      const std::vector< float >& pldist3d = dist3d[p];
+      const std::vector< geo2d::LineSegment<float> >& plseg_v = seg_v[p];
+      const std::vector< float >& pldist2d = segdist_v[p];
+
+      float pathdist = 0.;
+      for (auto const& d : pldist2d )
+	pathdist += d;
+
+      float dcenter = binwidth;      
+      while ( dcenter+binwidth<pathdist ) {
+      
+	float dstart  = dcenter-binwidth;
+	float dend    = dcenter+binwidth;
+	
+	float d = 0;
+	float s = 0;
+	float sbin_start = 0;
+	float sbin_end   = 0;
+	for (int iseg=0; iseg<pldist3d.size(); iseg++) {
+	  // get d-values spanned by the segment
+	  float segd1 = d;
+	  float segd2 = d+pldist2d[iseg];
+	  float segs1 = s;
+	  float segs2 = s+pldist2d[iseg];
+	  if ( segd2<dstart )
+	    continue; // move on
+	  if ( segd1>dend )
+	    break; // our bin has moved past the segments
+	  
+	  // otherwise, segment straddles either dstart or dend
+	  std::vector<float> segdir(3);
+	  for (int i=0; i<3; i++)
+	    segdir[i] = (plpath3d[iseg+1][i]-plpath3d[iseg][i])/pldist3d[iseg];
+	  
+	  if ( segd1<dstart && dstart<segd2 ) {
+	    // straddles dstart
+	    Double_t dstart3d[3];
+	    for (int i=0; i<3; i++)
+	      dstart3d[i] = plpath3d[iseg][i] + segdir[i]*(dstart-segd1);
+	    // project start into plane
+	    float wire = geo->NearestWire( dstart3d, p );
+	    geo2d::Vector<float> start2d( wire*0.3, dstart3d[0] );
+	    float dels = geo2d::dist( start2d, plseg_v[iseg].pt1 );
+	    sbin_start = s + dels;
+	  }
+	  
+	  if ( segd1<dend && dend<segd2 ) {
+	    // straddles dend
+	    Double_t dend3d[3];
+	    for (int i=0; i<3; i++)
+	      dend3d[i] = plpath3d[iseg][i] + segdir[i]*(dend-segd1);
+	    // project start into plane
+	    float wire = geo->NearestWire( dend3d, p );
+	    geo2d::Vector<float> end2d( wire*0.3, dend3d[0] );
+	    float dels = geo2d::dist( end2d, plseg_v[iseg].pt1 );
+	    sbin_end= s + dels;
+	  }
+	  
+	}//end of loop over segments
+
+	
+	// now we sum over hits in the srange we found
+	float q = 0;
+	for ( auto const& hitho : pathordered[p] ) {
+	  if ( sbin_start < hitho.s && hitho.s < sbin_end )
+	    q += hitho.phit->Integral();
+	}
+	
+	float dqdx = q/(2*binwidth);
+
+	std::cout << "bincenter:" << dcenter << " sbin=[" << sbin_start << "," << sbin_end << "] dqdx=" << dqdx << std::endl;      
+	
+	dedx_per_plane[p].push_back( dqdx );
+
+	dcenter += binwidth;
+      }// end of bincenter loop
+      
+    }//end of loop over planes
   }
   
   void TrackHitSorter::dump() const {
@@ -139,7 +256,7 @@ namespace thsort {
     for (int p=0; p<3; p++) {
       std::cout << "-------------------------------------------" << std::endl;
       std::cout << "Hits on Plane " << p << std::endl;
-      for (auto const& ho : ordered[p] ) {
+      for (auto const& ho : pathordered[p] ) {
 	const larlite::hit* phit = ho.phit;
 	std::cout << "  (" << ho.s << "," << ho.r << ") x=" << (2400+phit->PeakTime() - 3200)*cm_per_tick << " w=" << phit->WireID().Wire << std::endl;
       }
