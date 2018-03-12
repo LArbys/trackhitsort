@@ -34,7 +34,7 @@ namespace thsort {
 
     int numpts = track.NumberTrajectoryPoints();
     int ipt = 0;
-    float dist_s = 0;
+    float dist_s[3] = {0.0};
     while ( ipt+1<numpts ) {
       
       const TVector3& here = track.LocationAtPoint( ipt );
@@ -51,8 +51,8 @@ namespace thsort {
 	std::cout << "p" << p << "=[ (" << wire1*0.3 << "," << here.X() << ") (" << wire2*0.3 << "," << next.X() << ") ] ";
 	if ( geo2d::length2(ls)>0 ) {
 	  seg_v[p].emplace_back( std::move(ls) );
-	  segdist_v[p].push_back( dist_s );
-	  dist_s += sqrt(geo2d::length2(ls));
+	  segdist_v[p].push_back( dist_s[p] );
+	  dist_s[p] += sqrt(geo2d::length2(ls));
 
 	  // store 3d segment
 	  std::vector<float> seg3d(3);
@@ -121,9 +121,9 @@ namespace thsort {
 	  if ( s<0 || s > 1.0 || std::isnan(s) )
 	    continue;
 
-	  
 	  geo2d::Vector<float> pt1; // point on line
 	  pt1 = seg.pt1 + s*ab;
+	  s = geo2d::dist(pt1,seg.pt1);
 	  float r = geo2d::dist(pt,pt1);
 
 	  // std::cout << "(" << ihit << "," << iseg << "): "
@@ -155,7 +155,7 @@ namespace thsort {
   }
 
 
-  void TrackHitSorter::getPathBinneddEdx( const float binwidth, std::vector< std::vector<float> >& dedx_per_plane ) {
+  void TrackHitSorter::getPathBinneddEdx( const float binstep, const float binwidth, std::vector< std::vector<float> >& dedx_per_plane ) {
     // for each plane, we move through 3d track, taking steps of binwidth and collecting hits [-binwidth,binwidth] from center position
     // these are in 3D, so we need to decide what s-values to collect for he projected hits
     const larutil::Geometry* geo = larutil::Geometry::GetME();
@@ -166,33 +166,48 @@ namespace thsort {
       // get track segment information. both 3d and 2d projections
       const std::vector< std::vector<float> >& plpath3d = path3d[p];
       const std::vector< float >& pldist3d = dist3d[p];
-      const std::vector< geo2d::LineSegment<float> >& plseg_v = seg_v[p];
-      const std::vector< float >& pldist2d = segdist_v[p];
+      const std::vector< geo2d::LineSegment<float> >& plseg_v = seg_v[p]; // length of seg
+      const std::vector< float >& pldist2d = segdist_v[p]; // coordinate
 
+      // std::cout << "pldist2d.size()=" << pldist2d.size() << std::endl;
+      // std::cout << "pldist3d.size()=" << pldist3d.size() << std::endl;      
+      
       float pathdist = 0.;
-      for (auto const& d : pldist2d )
+      for (auto const& d : pldist3d )
 	pathdist += d;
 
-      float dcenter = binwidth;      
-      while ( dcenter+binwidth<pathdist ) {
+      float dcenter = binstep;      
+      while ( dcenter<pathdist ) {
       
 	float dstart  = dcenter-binwidth;
 	float dend    = dcenter+binwidth;
+	if ( dstart<0 )
+	  dstart = 0;
+	if ( dend > pathdist )
+	  dend = pathdist;
 	
-	float d = 0;
-	float s = 0;
+	float d = 0; // 3d distance
+	float s = 0; // 2d distance
 	float sbin_start = 0;
 	float sbin_end   = 0;
 	for (int iseg=0; iseg<pldist3d.size(); iseg++) {
 	  // get d-values spanned by the segment
+	  // 3d range
 	  float segd1 = d;
-	  float segd2 = d+pldist2d[iseg];
+	  float segd2 = d+pldist3d[iseg];
+	  // 2d (projected) range
+	  float segslen = sqrt( geo2d::length2( plseg_v[iseg] ) );
 	  float segs1 = s;
-	  float segs2 = s+pldist2d[iseg];
-	  if ( segd2<dstart )
-	    continue; // move on
-	  if ( segd1>dend )
-	    break; // our bin has moved past the segments
+	  float segs2 = s+segslen;
+
+	  // check if 3d segment is in bin
+	  if ( segd2<dstart ) {
+	    s = segs2;
+	    d = segd2;
+	    continue; // below bin range: move on
+	  }
+	  //if ( segd1>dend )
+	  //  break; // our bin has moved past the segments
 	  
 	  // otherwise, segment straddles either dstart or dend
 	  std::vector<float> segdir(3);
@@ -205,10 +220,17 @@ namespace thsort {
 	    for (int i=0; i<3; i++)
 	      dstart3d[i] = plpath3d[iseg][i] + segdir[i]*(dstart-segd1);
 	    // project start into plane
-	    float wire = geo->NearestWire( dstart3d, p );
+	    float wire = -1;
+	    try {
+	      wire = geo->NearestWire( dstart3d, p );
+	    }
+	    catch (...) {
+	      wire = geo->Nwires(p)-1;
+	    }
 	    geo2d::Vector<float> start2d( wire*0.3, dstart3d[0] );
 	    float dels = geo2d::dist( start2d, plseg_v[iseg].pt1 );
-	    sbin_start = s + dels;
+	    sbin_start = segs1 + dels;
+	    //std::cout << "sbin_start update: " << segs1 << "+" << dels << " of " << segslen << std::endl;
 	  }
 	  
 	  if ( segd1<dend && dend<segd2 ) {
@@ -217,12 +239,21 @@ namespace thsort {
 	    for (int i=0; i<3; i++)
 	      dend3d[i] = plpath3d[iseg][i] + segdir[i]*(dend-segd1);
 	    // project start into plane
-	    float wire = geo->NearestWire( dend3d, p );
+	    float wire = -1;
+	    try {
+	      wire = geo->NearestWire( dend3d, p );
+	    }
+	    catch (...) {
+	      wire = geo->Nwires(p)-1;
+	    }
 	    geo2d::Vector<float> end2d( wire*0.3, dend3d[0] );
 	    float dels = geo2d::dist( end2d, plseg_v[iseg].pt1 );
 	    sbin_end= s + dels;
 	  }
-	  
+
+	  // update
+	  s = segs2;
+	  d = segd2;
 	}//end of loop over segments
 
 	
@@ -233,13 +264,15 @@ namespace thsort {
 	    q += hitho.phit->Integral();
 	}
 	
-	float dqdx = q/(2*binwidth);
+	float dqdx = q/(dend-dstart);
 
-	std::cout << "bincenter:" << dcenter << " sbin=[" << sbin_start << "," << sbin_end << "] dqdx=" << dqdx << std::endl;      
+	std::cout << "bincenter:" << dcenter << " dbin=[" << dstart << "," << dend << "] "
+		  << "sbin=[" << sbin_start << "," << sbin_end << "] "
+		  << "dqdx=" << dqdx << std::endl;      
 	
 	dedx_per_plane[p].push_back( dqdx );
 
-	dcenter += binwidth;
+	dcenter += binstep;
       }// end of bincenter loop
       
     }//end of loop over planes

@@ -39,7 +39,7 @@ namespace thsort {
 
     void buildSortedHitList( const larlite::vertex& vtx, const larlite::track& track, const std::vector<larlite::hit>& hit_v,
 			     const float max_radius, std::vector<int>& hitmask_v );
-    void getPathBinneddEdx( const float binwidth, std::vector< std::vector<float> >& dedx_per_plane );
+    void getPathBinneddEdx( const float binstep, const float binwidth, std::vector< std::vector<float> >& dedx_per_plane );
     void dump() const;
 
     // track segments. 3d and 2d projected
