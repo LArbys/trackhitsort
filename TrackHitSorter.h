@@ -41,6 +41,7 @@ namespace thsort {
 			     const float max_radius, std::vector<int>& hitmask_v );
     void getPathBinneddEdx( const float binstep, const float binwidth, std::vector< std::vector<float> >& dedx_per_plane );
     void dump() const;
+    float q2MeV( const float q, const std::vector<float>& xyz );
 
     // track segments. 3d and 2d projected
     std::vector< std::vector<float> > path3d[3]; // per plane. corresponding 3d point at a

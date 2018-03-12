@@ -2,6 +2,7 @@
 
 #include "LArUtil/Geometry.h"
 #include "LArUtil/LArProperties.h"
+#include "LArUtil/DetectorProperties.h"
 
 namespace thsort {
 
@@ -181,6 +182,8 @@ namespace thsort {
       
 	float dstart  = dcenter-binwidth;
 	float dend    = dcenter+binwidth;
+	std::vector<float> bincenter_xyz(3);
+	
 	if ( dstart<0 )
 	  dstart = 0;
 	if ( dend > pathdist )
@@ -251,6 +254,11 @@ namespace thsort {
 	    sbin_end= s + dels;
 	  }
 
+	  if ( segd1<dcenter && dcenter<segd2 ) {
+	    for (int i=0; i<3; i++)
+	      bincenter_xyz[i] = plpath3d[iseg][i] + segdir[i]*(dcenter-segd1);
+	  }
+
 	  // update
 	  s = segs2;
 	  d = segd2;
@@ -263,20 +271,59 @@ namespace thsort {
 	  if ( sbin_start < hitho.s && hitho.s < sbin_end )
 	    q += hitho.phit->Integral();
 	}
-	
-	float dqdx = q/(dend-dstart);
 
-	std::cout << "bincenter:" << dcenter << " dbin=[" << dstart << "," << dend << "] "
+	float cm   = dend-dstart;
+	float MeV  = q2MeV( q, bincenter_xyz );
+	float dqdx = q/cm;
+	float dEdx = MeV/cm;
+
+	std::cout << "bincenter:" << dcenter
+		  << " centerxyz=(" << bincenter_xyz[0] << "," << bincenter_xyz[1] << "," << bincenter_xyz[2] << ") "
+		  << "dbin=[" << dstart << "," << dend << "] "
 		  << "sbin=[" << sbin_start << "," << sbin_end << "] "
-		  << "dqdx=" << dqdx << std::endl;      
+		  << " dqdx=" << dqdx
+		  << " dEdx=" << dEdx
+		  << std::endl;      
 	
-	dedx_per_plane[p].push_back( dqdx );
-
+	dedx_per_plane[p].push_back( dEdx );
+	
 	dcenter += binstep;
       }// end of bincenter loop
       
     }//end of loop over planes
   }
+
+  float TrackHitSorter::q2MeV( const float q, const std::vector<float>& xyz ) {
+
+    const float _fC_to_e = 6250.; // e- / fC
+    const float _e_to_eV = 23.6;  // eV / e-
+    const float _eV_to_MeV = 1e-6;// eV / MeV
+    const float _ADC_to_mV = 0.5; // ADC -> mV conversion from gain measurements
+
+    const float _clocktick  = larutil::DetectorProperties::GetME()->SamplingRate() * 1.e-3;    
+    //const float _tau        = larutil::LArProperties::GetME()->ElectronLifetime();
+    const float _tau        = 1.0e6; // what is the units?
+    const float cm_per_tick = larutil::LArProperties::GetME()->DriftVelocity()*0.5;
+    
+    float _tick = xyz[0]/cm_per_tick; // from trigger (not abs scale)
+    
+    float _lifetime_corr = exp( _tick * _clocktick / _tau );
+    float _elec_gain     = 240; // data
+    //float _elec_gain     = 200; // MC
+    float _recomb_factor = 0.62;
+
+    //double qcorr = ChargeCorrection(h.charge,h.w,h.t,resultShower.fDCosStart,resultShower.fXYZStart);
+    double qcorr = 1.0*q; // skipping correction for now;
+
+    float _electrons = qcorr * _elec_gain;
+
+    float _dQ = _electrons * _lifetime_corr * _e_to_eV * _eV_to_MeV;
+
+    float _dE = _dQ / _recomb_factor;
+
+    return _dE;
+
+  }// loop over all hits
   
   void TrackHitSorter::dump() const {
     std::cout << "=========================================================" << std::endl;
