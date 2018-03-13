@@ -4,7 +4,7 @@
 #include "LArUtil/LArProperties.h"
 #include "LArUtil/DetectorProperties.h"
 
-namespace thsort {
+namespace larlitecv {
 
   void TrackHitSorter::buildSortedHitList( const larlite::vertex& vertex, const larlite::track& track, const std::vector<larlite::hit>& hit_v,
 					   const float max_radius, std::vector<int>& hitmask_v ) {
@@ -160,18 +160,20 @@ namespace thsort {
     // for each plane, we move through 3d track, taking steps of binwidth and collecting hits [-binwidth,binwidth] from center position
     // these are in 3D, so we need to decide what s-values to collect for he projected hits
     const larutil::Geometry* geo = larutil::Geometry::GetME();
-    const larutil::LArProperties* larp = larutil::LArProperties::GetME();
-    
+    //const larutil::LArProperties* larp = larutil::LArProperties::GetME();
+
     for (int p=2; p<3; p++) {
 
       // get track segment information. both 3d and 2d projections
       const std::vector< std::vector<float> >& plpath3d = path3d[p];
       const std::vector< float >& pldist3d = dist3d[p];
       const std::vector< geo2d::LineSegment<float> >& plseg_v = seg_v[p]; // length of seg
-      const std::vector< float >& pldist2d = segdist_v[p]; // coordinate
+      //const std::vector< float >& pldist2d = segdist_v[p]; // coordinate
 
       // std::cout << "pldist2d.size()=" << pldist2d.size() << std::endl;
-      // std::cout << "pldist3d.size()=" << pldist3d.size() << std::endl;      
+      // std::cout << "pldist3d.size()=" << pldist3d.size() << std::endl;
+
+      bincenters_xyz[p].clear();
       
       float pathdist = 0.;
       for (auto const& d : pldist3d )
@@ -193,7 +195,7 @@ namespace thsort {
 	float s = 0; // 2d distance
 	float sbin_start = 0;
 	float sbin_end   = 0;
-	for (int iseg=0; iseg<pldist3d.size(); iseg++) {
+	for (int iseg=0; iseg<(int)pldist3d.size(); iseg++) {
 	  // get d-values spanned by the segment
 	  // 3d range
 	  float segd1 = d;
@@ -236,7 +238,7 @@ namespace thsort {
 	    //std::cout << "sbin_start update: " << segs1 << "+" << dels << " of " << segslen << std::endl;
 	  }
 	  
-	  if ( segd1<dend && dend<segd2 ) {
+	  if ( segd1<dend && dend<=segd2 ) {
 	    // straddles dend
 	    Double_t dend3d[3];
 	    for (int i=0; i<3; i++)
@@ -254,9 +256,10 @@ namespace thsort {
 	    sbin_end= s + dels;
 	  }
 
-	  if ( segd1<dcenter && dcenter<segd2 ) {
+	  if ( segd1<dcenter && dcenter<=segd2 ) {
 	    for (int i=0; i<3; i++)
 	      bincenter_xyz[i] = plpath3d[iseg][i] + segdir[i]*(dcenter-segd1);
+	    bincenters_xyz[p].push_back( bincenter_xyz );
 	  }
 
 	  // update
@@ -267,9 +270,12 @@ namespace thsort {
 	
 	// now we sum over hits in the srange we found
 	float q = 0;
+	int nhits = 0;
 	for ( auto const& hitho : pathordered[p] ) {
-	  if ( sbin_start < hitho.s && hitho.s < sbin_end )
+	  if ( sbin_start < hitho.s && hitho.s < sbin_end ) {
 	    q += hitho.phit->Integral();
+	    nhits++;
+	  }
 	}
 
 	float cm   = dend-dstart;
@@ -277,13 +283,14 @@ namespace thsort {
 	float dqdx = q/cm;
 	float dEdx = MeV/cm;
 
-	std::cout << "bincenter:" << dcenter
-		  << " centerxyz=(" << bincenter_xyz[0] << "," << bincenter_xyz[1] << "," << bincenter_xyz[2] << ") "
-		  << "dbin=[" << dstart << "," << dend << "] "
-		  << "sbin=[" << sbin_start << "," << sbin_end << "] "
-		  << " dqdx=" << dqdx
-		  << " dEdx=" << dEdx
-		  << std::endl;      
+	// std::cout << "bincenter:" << dcenter
+	// 	  << " centerxyz=(" << bincenter_xyz[0] << "," << bincenter_xyz[1] << "," << bincenter_xyz[2] << ") "
+	// 	  << "dbin=[" << dstart << "," << dend << "] "
+	// 	  << "sbin=[" << sbin_start << "," << sbin_end << "] "
+	// 	  << " nhits=" << nhits 
+	// 	  << " dqdx=" << dqdx
+	// 	  << " dEdx=" << dEdx
+	// 	  << std::endl;      
 	
 	dedx_per_plane[p].push_back( dEdx );
 	
@@ -295,10 +302,10 @@ namespace thsort {
 
   float TrackHitSorter::q2MeV( const float q, const std::vector<float>& xyz ) {
 
-    const float _fC_to_e = 6250.; // e- / fC
+    //const float _fC_to_e = 6250.; // e- / fC
     const float _e_to_eV = 23.6;  // eV / e-
     const float _eV_to_MeV = 1e-6;// eV / MeV
-    const float _ADC_to_mV = 0.5; // ADC -> mV conversion from gain measurements
+    //const float _ADC_to_mV = 0.5; // ADC -> mV conversion from gain measurements
 
     const float _clocktick  = larutil::DetectorProperties::GetME()->SamplingRate() * 1.e-3;    
     //const float _tau        = larutil::LArProperties::GetME()->ElectronLifetime();
@@ -324,12 +331,24 @@ namespace thsort {
     return _dE;
 
   }// loop over all hits
+
+  void TrackHitSorter::clear() {
+    for (int p=0; p<3; p++) {
+      path3d[p].clear();
+      dist3d[p].clear();
+      seg_v[p].clear();
+      segdist_v[p].clear();
+      pathordered[p].clear();
+      distordered[p].clear();
+      bincenters_xyz[p].clear();
+    }
+  }
   
   void TrackHitSorter::dump() const {
     std::cout << "=========================================================" << std::endl;
     std::cout << __PRETTY_FUNCTION__ << std::endl;
 
-    const larutil::Geometry* geo = larutil::Geometry::GetME();
+    //const larutil::Geometry* geo = larutil::Geometry::GetME();
     const float driftv = larutil::LArProperties::GetME()->DriftVelocity();
     const float cm_per_tick = driftv*0.5;
     
